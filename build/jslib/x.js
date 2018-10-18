@@ -73,178 +73,6 @@ var requirejs, require, define, xpcUtil;
             commandOption = fileName.substring(1);
             fileName = process.argv[3];
         }
-    } else if (typeof Packages !== 'undefined') {
-        env = 'rhino';
-
-        fileName = args[0];
-
-        if (fileName && fileName.indexOf('-') === 0) {
-            commandOption = fileName.substring(1);
-            fileName = args[1];
-        }
-
-        //Exec/readFile differs between Rhino and Nashorn. Rhino has an
-        //importPackage where Nashorn does not, so branch on that. This is a
-        //coarser check -- detecting readFile existence might also be enough for
-        //this spot. However, sticking with importPackage to keep it the same
-        //as other Rhino/Nashorn detection branches.
-        if (typeof importPackage !== 'undefined') {
-            rhinoContext = Packages.org.mozilla.javascript.ContextFactory.getGlobal().enterContext();
-
-            exec = function (string, name) {
-                return rhinoContext.evaluateString(this, string, name, 0, null);
-            };
-        } else {
-            exec = function (string, name) {
-                load({ script: string, name: name});
-            };
-            readFile = readFully;
-        }
-
-        exists = function (fileName) {
-            return (new java.io.File(fileName)).exists();
-        };
-
-        //Define a console.log for easier logging. Don't
-        //get fancy though.
-        if (typeof console === 'undefined') {
-            console = {
-                log: function () {
-                    print.apply(undefined, arguments);
-                }
-            };
-        }
-    } else if ((typeof navigator !== 'undefined' && typeof document !== 'undefined') ||
-            (typeof importScripts !== 'undefined' && typeof self !== 'undefined')) {
-        env = 'browser';
-
-        readFile = function (path) {
-            return fs.readFileSync(path, 'utf8');
-        };
-
-        exec = function (string) {
-            return eval(string);
-        };
-
-        exists = function () {
-            console.log('x.js exists not applicable in browser env');
-            return false;
-        };
-
-    } else if (typeof Components !== 'undefined' && Components.classes && Components.interfaces) {
-        env = 'xpconnect';
-
-        Components.utils['import']('resource://gre/modules/FileUtils.jsm');
-        Cc = Components.classes;
-        Ci = Components.interfaces;
-
-        fileName = args[0];
-
-        if (fileName && fileName.indexOf('-') === 0) {
-            commandOption = fileName.substring(1);
-            fileName = args[1];
-        }
-
-        xpcUtil = {
-            isWindows: ('@mozilla.org/windows-registry-key;1' in Cc),
-            cwd: function () {
-                return FileUtils.getFile("CurWorkD", []).path;
-            },
-
-            //Remove . and .. from paths, normalize on front slashes
-            normalize: function (path) {
-                //There has to be an easier way to do this.
-                var i, part, ary,
-                    firstChar = path.charAt(0);
-
-                if (firstChar !== '/' &&
-                        firstChar !== '\\' &&
-                        path.indexOf(':') === -1) {
-                    //A relative path. Use the current working directory.
-                    path = xpcUtil.cwd() + '/' + path;
-                }
-
-                ary = path.replace(/\\/g, '/').split('/');
-
-                for (i = 0; i < ary.length; i += 1) {
-                    part = ary[i];
-                    if (part === '.') {
-                        ary.splice(i, 1);
-                        i -= 1;
-                    } else if (part === '..') {
-                        ary.splice(i - 1, 2);
-                        i -= 2;
-                    }
-                }
-                return ary.join('/');
-            },
-
-            xpfile: function (path) {
-                var fullPath;
-                try {
-                    fullPath = xpcUtil.normalize(path);
-                    if (xpcUtil.isWindows) {
-                        fullPath = fullPath.replace(/\//g, '\\');
-                    }
-                    return new FileUtils.File(fullPath);
-                } catch (e) {
-                    throw new Error((fullPath || path) + ' failed: ' + e);
-                }
-            },
-
-            readFile: function (/*String*/path, /*String?*/encoding) {
-                //A file read function that can deal with BOMs
-                encoding = encoding || "utf-8";
-
-                var inStream, convertStream,
-                    readData = {},
-                    fileObj = xpcUtil.xpfile(path);
-
-                //XPCOM, you so crazy
-                try {
-                    inStream = Cc['@mozilla.org/network/file-input-stream;1']
-                               .createInstance(Ci.nsIFileInputStream);
-                    inStream.init(fileObj, 1, 0, false);
-
-                    convertStream = Cc['@mozilla.org/intl/converter-input-stream;1']
-                                    .createInstance(Ci.nsIConverterInputStream);
-                    convertStream.init(inStream, encoding, inStream.available(),
-                    Ci.nsIConverterInputStream.DEFAULT_REPLACEMENT_CHARACTER);
-
-                    convertStream.readString(inStream.available(), readData);
-                    return readData.value;
-                } catch (e) {
-                    throw new Error((fileObj && fileObj.path || '') + ': ' + e);
-                } finally {
-                    if (convertStream) {
-                        convertStream.close();
-                    }
-                    if (inStream) {
-                        inStream.close();
-                    }
-                }
-            }
-        };
-
-        readFile = xpcUtil.readFile;
-
-        exec = function (string) {
-            return eval(string);
-        };
-
-        exists = function (fileName) {
-            return xpcUtil.xpfile(fileName).exists();
-        };
-
-        //Define a console.log for easier logging. Don't
-        //get fancy though.
-        if (typeof console === 'undefined') {
-            console = {
-                log: function () {
-                    print.apply(undefined, arguments);
-                }
-            };
-        }
     }
 
     //INSERT require.js
@@ -256,18 +84,12 @@ var requirejs, require, define, xpcUtil;
         define: define
     };
 
-    if (env === 'browser') {
-        //INSERT build/jslib/browser.js
-    } else if (env === 'rhino') {
-        //INSERT build/jslib/rhino.js
-    } else if (env === 'node') {
+    if (env === 'node') {
         this.requirejsVars.nodeRequire = nodeRequire;
         require.nodeRequire = nodeRequire;
 
         //INSERT build/jslib/node.js
 
-    } else if (env === 'xpconnect') {
-        //INSERT build/jslib/xpconnect.js
     }
 
     //Support a default file name to execute. Useful for hosted envs
@@ -282,7 +104,7 @@ var requirejs, require, define, xpcUtil;
      * tasks.
      */
     function loadLib() {
-        //INSERT LIB
+        //INSERT1 LIB
     }
 
 
@@ -394,64 +216,12 @@ var requirejs, require, define, xpcUtil;
 
         module.exports = requirejs;
         return;
-    } else if (env === 'browser') {
-        //Only option is to use the API.
-        setBaseUrl(location.href);
-        createRjsApi();
-        return;
-    } else if ((env === 'rhino' || env === 'xpconnect') &&
-            //User sets up requirejsAsLib variable to indicate it is loaded
-            //via load() to be used as a library.
-            typeof requirejsAsLib !== 'undefined' && requirejsAsLib) {
-        //This script is loaded via rhino's load() method, expose the
-        //API and get out.
-        setBaseUrl(fileName);
-        createRjsApi();
-        return;
     }
 
-    if (commandOption === 'o') {
-        //Do the optimizer work.
-        loadLib();
-
-        //INSERT build/build.js
-
-    } else if (commandOption === 'v') {
+    if (commandOption === 'v') {
         console.log('r.js: ' + version +
                     ', RequireJS: ' + this.requirejsVars.require.version +
                     ', UglifyJS: 2.8.29');
-    } else if (commandOption === 'convert') {
-        loadLib();
-
-        this.requirejsVars.require(['env!env/args', 'commonJs', 'env!env/print'],
-            function (args, commonJs, print) {
-
-                var srcDir, outDir;
-                srcDir = args[0];
-                outDir = args[1];
-
-                if (!srcDir || !outDir) {
-                    print('Usage: path/to/commonjs/modules output/dir');
-                    return;
-                }
-
-                commonJs.convertDir(args[0], args[1]);
-            });
-    } else {
-        //Just run an app
-
-        //Load the bundled libraries for use in the app.
-        if (commandOption === 'lib') {
-            loadLib();
-        }
-
-        setBaseUrl(fileName);
-
-        if (exists(fileName)) {
-            exec(readFile(fileName), fileName);
-        } else {
-            showHelp();
-        }
     }
 
 }((typeof console !== 'undefined' ? console : undefined),

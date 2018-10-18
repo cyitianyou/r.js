@@ -16,7 +16,7 @@ var fs = require('fs'),
     loadRegExp = /\/\/INSERT ([\w\/\.]+)/g,
     moduleNameRegExp = /build\/jslib\/([\w\/\-]+)\.js$/,
     defRegExp = /define\s*\(/,
-    envs = ['browser', 'node', 'rhino', 'xpconnect'],
+    envs = ['node'],
     //Update this list of files by running the optimizer against
     //build/jslib/opto.build.js,
     //but then remove any jslib/node entries and make sure there is

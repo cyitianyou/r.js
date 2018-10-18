@@ -101,6 +101,12 @@
                 contents +
                 '\n}(requirejsVars.require, requirejsVars.requirejs, requirejsVars.define));';
     };
+    req.makeNodeWrapperForHttp = function(contents, moduleName) {
+        return '(function (require, requirejs, define) {\n ' +
+            contents +
+            "\nglobal.window." + moduleName + " = global." + moduleName + "=$.extend(" + moduleName + ",global.window." + moduleName + ");\n" +
+            '\n}(requirejsVars.require, requirejsVars.requirejs, requirejsVars.define));';
+    };
 
     req.load = function (context, moduleName, url) {
         var contents, err,
@@ -110,57 +116,100 @@
             console.warn('Shim config not supported in Node, may or may not work. Detected ' +
                             'for module: ' + moduleName);
         }
+		if (url.startsWith("http")) {
+			let JQueryAjaxSetting = {
+				url: url,
+				type: "GET",
+				contentType: "text/html; charset=utf-8",
+				async: true,
+				cache: true,
+				error: function(xhr, status, error) {
+					console.log("require file [" + url + "] failed");
+					context.completeLoad(moduleName);
+				},
+				success: function(data) {
+					async function asyncSuccess(data){
+						console.log("require file [" + url + "] sucessful");
+						try {
+							if (!url.includes("/index.js") &&
+								!url.includes("/index.ui.c.js") &&
+								!url.includes("/index.ui.m.js") &&
+								!url.includes("/index.min.js") &&
+								!url.includes("/index.ui.c.min.js") &&
+								!url.includes("/index.ui.m.min.js")) {
+								data = req.makeNodeWrapper(data);
+							} else {
+								let name = url.replace(document.location.href, "");
+								if (name.lastIndexOf("/") > 0) {
+									name = name.substring(0, name.lastIndexOf("/"));
+								}
+								if (name.lastIndexOf("/") > 0) {
+									name = name.substring(name.lastIndexOf("/") + 1);
+								}
+								(name === "") && (name = (new Date()).getTime().toString());
+								data = req.makeNodeWrapperForHttp(data, name);
+							}
+							vm.runInThisContext(data, url);
+							//Support anonymous modules.
+						} catch (e) {
+						}
+					}
+					asyncSuccess(data).then(function(){console.log("require file [" + url + "] finish");context.completeLoad(moduleName);}).catch(e => context.completeLoad(moduleName));
+				},
+			};
+			console.log("start require file [" + url + "]");
+			jQuery.ajax(JQueryAjaxSetting);
+		} else {
+			if (exists(url)) {
+				contents = fs.readFileSync(url, 'utf8');
 
-        if (exists(url)) {
-            contents = fs.readFileSync(url, 'utf8');
+				contents = req.makeNodeWrapper(contents);
+				try {
+					vm.runInThisContext(contents, fs.realpathSync(url));
+				} catch (e) {
+					err = new Error('Evaluating ' + url + ' as module "' +
+									moduleName + '" failed with error: ' + e);
+					err.originalError = e;
+					err.moduleName = moduleName;
+					err.requireModules = [moduleName];
+					err.fileName = url;
+					return context.onError(err);
+				}
+			} else {
+				def(moduleName, function () {
+					//Get the original name, since relative requires may be
+					//resolved differently in node (issue #202). Also, if relative,
+					//make it relative to the URL of the item requesting it
+					//(issue #393)
+					var dirName,
+						map = hasProp(context.registry, moduleName) &&
+								context.registry[moduleName].map,
+						parentMap = map && map.parentMap,
+						originalName = map && map.originalName;
 
-            contents = req.makeNodeWrapper(contents);
-            try {
-                vm.runInThisContext(contents, fs.realpathSync(url));
-            } catch (e) {
-                err = new Error('Evaluating ' + url + ' as module "' +
-                                moduleName + '" failed with error: ' + e);
-                err.originalError = e;
-                err.moduleName = moduleName;
-                err.requireModules = [moduleName];
-                err.fileName = url;
-                return context.onError(err);
-            }
-        } else {
-            def(moduleName, function () {
-                //Get the original name, since relative requires may be
-                //resolved differently in node (issue #202). Also, if relative,
-                //make it relative to the URL of the item requesting it
-                //(issue #393)
-                var dirName,
-                    map = hasProp(context.registry, moduleName) &&
-                            context.registry[moduleName].map,
-                    parentMap = map && map.parentMap,
-                    originalName = map && map.originalName;
+					if (originalName.charAt(0) === '.' && parentMap) {
+						dirName = parentMap.url.split('/');
+						dirName.pop();
+						originalName = dirName.join('/') + '/' + originalName;
+					}
 
-                if (originalName.charAt(0) === '.' && parentMap) {
-                    dirName = parentMap.url.split('/');
-                    dirName.pop();
-                    originalName = dirName.join('/') + '/' + originalName;
-                }
-
-                try {
-                    return (context.config.nodeRequire || req.nodeRequire)(originalName);
-                } catch (e) {
-                    err = new Error('Tried loading "' + moduleName + '" at ' +
-                                     url + ' then tried node\'s require("' +
-                                        originalName + '") and it failed ' +
-                                     'with error: ' + e);
-                    err.originalError = e;
-                    err.moduleName = originalName;
-                    err.requireModules = [moduleName];
-                    throw err;
-                }
-            });
-        }
-
-        //Support anonymous modules.
-        context.completeLoad(moduleName);
+					try {
+						return (context.config.nodeRequire || req.nodeRequire)(originalName);
+					} catch (e) {
+						err = new Error('Tried loading "' + moduleName + '" at ' +
+										 url + ' then tried node\'s require("' +
+											originalName + '") and it failed ' +
+										 'with error: ' + e);
+						err.originalError = e;
+						err.moduleName = originalName;
+						err.requireModules = [moduleName];
+						throw err;
+					}
+				});
+			}
+			//Support anonymous modules.
+			context.completeLoad(moduleName);
+		}
     };
 
     //Override to provide the function wrapper for define/require.
